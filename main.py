@@ -66,10 +66,10 @@ def create_appointment(appointment: AppointmentCreate):
     for b in response.data:
         if isinstance(b, dict):
             val = b.get("chair_number")
-            if val is not None:
+            if val is not None and str(val).isdigit():
                 booked_chairs.append(int(val))
         else:
-            if b is not None:
+            if b is not None and str(b).isdigit():
                 booked_chairs.append(int(b))
                 
     if len(booked_chairs) >= 4:
