@@ -12,12 +12,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Supabase URL or Key is missing in environment variables!")
 
-# إنشاء العميل مع المخطط العام بشكل مستقر
-supabase: Client = create_client(
-    SUPABASE_URL, 
-    SUPABASE_KEY,
-    options={"schema": "public"}
-)
+# تم إزالة الـ options الخاطئة التي كانت تسبب انهيار السيرفر
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI(title="Dental Clinic API", version="1.0")
 
@@ -65,7 +61,7 @@ def get_available_slots(appointment_date: str):
         
     return {"date": appointment_date, "schedule": slots_status}
 
-# 2. حجز موعد جديد للمريض
+# 2. حجز موعد جديد للمريض (اختيار أول كرسي شاغر تلقائياً)
 @app.post("/appointments")
 def create_appointment(appointment: AppointmentCreate):
     if not (10 <= appointment.hour_slot <= 22):
@@ -87,7 +83,7 @@ def create_appointment(appointment: AppointmentCreate):
         raise HTTPException(status_code=400, detail="عذراً، هذه الساعة ممتلئة بالكامل (4 كراسي محجوزة)")
     
     assigned_chair = None
-    for c in [1,2,3,4]:
+    for c in [1, 2, 3, 4]:
         if c not in booked_chairs:
             assigned_chair = c
             break
