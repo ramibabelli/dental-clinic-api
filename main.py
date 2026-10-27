@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
+# سنستخدم مفتاح الـ service_role لضمان صلاحيات كاملة للإدخال والقراءة
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
@@ -60,7 +61,7 @@ def get_available_slots(appointment_date: str):
         
     return {"date": appointment_date, "schedule": slots_status}
 
-# 2. حجز موعد جديد للمريض
+# 2. حجز موعد جديد للمريض (اختيار أول كرسي شاغر تلقائياً)
 @app.post("/appointments")
 def create_appointment(appointment: AppointmentCreate):
     if not (10 <= appointment.hour_slot <= 22):
