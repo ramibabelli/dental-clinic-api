@@ -7,13 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-# تأكد 100% أن هذا المتغير في Render يحتوي على الـ service_role وليس الـ anon
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Supabase URL or Key is missing in environment variables!")
 
-# تعديل طريقة إنشاء العميل لضمان إرسال الطلبات للمخطط العام بشكل صريح ومستقر
+# إنشاء العميل مع المخطط العام بشكل مستقر
 supabase: Client = create_client(
     SUPABASE_URL, 
     SUPABASE_KEY,
@@ -66,7 +65,7 @@ def get_available_slots(appointment_date: str):
         
     return {"date": appointment_date, "schedule": slots_status}
 
-# 2. حجز موعد جديد للمريض (اختيار أول كرسي شاغر تلقائياً)
+# 2. حجز موعد جديد للمريض
 @app.post("/appointments")
 def create_appointment(appointment: AppointmentCreate):
     if not (10 <= appointment.hour_slot <= 22):
@@ -88,13 +87,12 @@ def create_appointment(appointment: AppointmentCreate):
         raise HTTPException(status_code=400, detail="عذراً، هذه الساعة ممتلئة بالكامل (4 كراسي محجوزة)")
     
     assigned_chair = None
-    for c in:
+    for c in [1,2,3,4]:
         if c not in booked_chairs:
             assigned_chair = c
             break
             
     try:
-        # تحويل البيانات إلى قاموس بايثون صافي ونظيف لمنع أخطاء الـ JSON وعمود الهاتف المضاف حديثاً
         payload = {
             "patient_name": str(appointment.patient_name),
             "phone": str(appointment.phone) if appointment.phone else None,
