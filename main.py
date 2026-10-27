@@ -7,13 +7,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-# سنستخدم مفتاح الـ service_role لضمان صلاحيات كاملة للإدخال والقراءة
+# تأكد 100% أن هذا المتغير في Render يحتوي على الـ service_role وليس الـ anon
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Supabase URL or Key is missing in environment variables!")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# تعديل طريقة إنشاء العميل لضمان إرسال الطلبات للمخطط العام بشكل صريح ومستقر
+supabase: Client = create_client(
+    SUPABASE_URL, 
+    SUPABASE_KEY,
+    options={"schema": "public"}
+)
 
 app = FastAPI(title="Dental Clinic API", version="1.0")
 
@@ -83,21 +88,24 @@ def create_appointment(appointment: AppointmentCreate):
         raise HTTPException(status_code=400, detail="عذراً، هذه الساعة ممتلئة بالكامل (4 كراسي محجوزة)")
     
     assigned_chair = None
-    for c in [1, 2, 3, 4]:
+    for c in:
         if c not in booked_chairs:
             assigned_chair = c
             break
             
     try:
-        insert_response = supabase.table("appointments").insert({
-            "patient_name": appointment.patient_name,
-            "phone": appointment.phone,
-            "treatment_type": appointment.treatment_type,
-            "appointment_date": appointment.appointment_date,
-            "hour_slot": appointment.hour_slot,
-            "chair_number": assigned_chair,
+        # تحويل البيانات إلى قاموس بايثون صافي ونظيف لمنع أخطاء الـ JSON وعمود الهاتف المضاف حديثاً
+        payload = {
+            "patient_name": str(appointment.patient_name),
+            "phone": str(appointment.phone) if appointment.phone else None,
+            "treatment_type": str(appointment.treatment_type),
+            "appointment_date": str(appointment.appointment_date),
+            "hour_slot": int(appointment.hour_slot),
+            "chair_number": int(assigned_chair) if assigned_chair else None,
             "status": "confirmed"
-        }).execute()
+        }
+        
+        insert_response = supabase.table("appointments").insert(payload).execute()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase Insert Error: {str(e)}")
     
@@ -115,29 +123,3 @@ def get_all_appointments(date: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase Error: {str(e)}")
     return {"appointments": response.data or []}
-    # مسار مؤقت لإصلاح قاعدة البيانات والصلاحيات تلقائياً
-@app.get("/fix-database-now")
-def fix_database():
-    try:
-        # تنفيذ أوامر الـ SQL مباشرة لإصلاح الجداول والصلاحيات
-        query = """
-        GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role, postgres;
-        GRANT ALL ON TABLE public.appointments TO anon, authenticated, service_role, postgres;
-        GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role, postgres;
-        ALTER TABLE public.appointments DISABLE ROW LEVEL SECURITY;
-        ALTER TABLE public.appointments ADD COLUMN IF NOT EXISTS phone text;
-        """
-        # استدعاء الـ RPC الداخلي لتنفيذ الـ SQL
-        supabase.rpc("read_in_schema_version", {}).execute() # محاولة أولى
-        
-        # طريقة بديلة ومباشرة عبر بروتوكول postgrest
-        supabase.postgrest.rpc("read_in_schema_version", {}).execute()
-        
-        return {"status": "success", "message": "تمت محاولة إرسال الأوامر بنجاح، جرب الـ POST الآن!"}
-    except Exception as e:
-        # إذا لم يعمل الـ RPC، سنقوم بإنشاء عمود الهاتف بطريقة برمجية آمنة
-        return {
-            "status": "info", 
-            "hint": "إذا واجهت مشكلة صلاحيات الـ SQL، تأكد من إضافة عمود phone يدوياً إن أمكن.",
-            "error_details": str(e)
-        }
