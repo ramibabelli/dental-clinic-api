@@ -39,7 +39,7 @@ def get_available_slots(appointment_date: str):
     slots_status = []
     for hour in working_hours:
         # كم كرسي محجوز في هذه الساعة؟
-        chairs_in_hour = [b["chair_number"] for b in booked_appointments if b["hour_slot"] == hour]
+        chairs_in_hour = [int(b["chair_number"]) for b in booked_appointments if b.get("hour_slot") == hour and b.get("chair_number") is not None]
         available_chairs = [c for c in [1, 2, 3, 4] if c not in chairs_in_hour]
         
         slots_status.append({
@@ -53,7 +53,6 @@ def get_available_slots(appointment_date: str):
     return {"date": appointment_date, "schedule": slots_status}
 
 # 2. حجز موعد جديد للمريض (اختيار أول كرسي شاغر تلقائياً)
-# 2. حجز موعد جديد للمريض (اختيار أول كرسي شاغر تلقائياً)
 @app.post("/appointments")
 def create_appointment(appointment: AppointmentCreate):
     # التأكد أن الساعة ضمن الدوام (10 إلى 22)
@@ -63,7 +62,7 @@ def create_appointment(appointment: AppointmentCreate):
     # التحقق من الكراسي المحجوزة في هذه الساعة وذلك اليوم
     response = supabase.table("appointments").select("chair_number").eq("appointment_date", appointment.appointment_date).eq("hour_slot", appointment.hour_slot).eq("status", "confirmed").execute()
     
-booked_chairs = []
+    booked_chairs = []
     for b in response.data:
         if isinstance(b, dict):
             val = b.get("chair_number")
@@ -71,7 +70,8 @@ booked_chairs = []
                 booked_chairs.append(int(val))
         else:
             if b is not None:
-                booked_chairs.append(int(b))    
+                booked_chairs.append(int(b))
+                
     if len(booked_chairs) >= 4:
         raise HTTPException(status_code=400, detail="عذراً، هذه الساعة ممتلئة بالكامل (4 كراسي محجوزة)")
     
