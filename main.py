@@ -62,7 +62,7 @@ def create_appointment(appointment: AppointmentCreate):
     # التحقق من الكراسي المحجوزة في هذه الساعة وذلك اليوم
     response = supabase.table("appointments").select("chair_number").eq("appointment_date", appointment.appointment_date).eq("hour_slot", appointment.hour_slot).eq("status", "confirmed").execute()
     
-    booked_chairs = [b["chair_number"] for b in response.data]
+booked_chairs = [int(b["chair_number"]) for b in response.data if b.get("chair_number") is not None]
     
     if len(booked_chairs) >= 4:
         raise HTTPException(status_code=400, detail="عذراً، هذه الساعة ممتلئة بالكامل (4 كراسي محجوزة)")
