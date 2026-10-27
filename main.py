@@ -80,7 +80,7 @@ def create_appointment(appointment: AppointmentCreate):
                 booked_chairs.append(int(val))
         else:
             if b is not None and str(b).isdigit():
-                booked_chairs.append(int(b))
+                booked_chairs.append(int(b)) # تصحيح b بدلاً من val
                 
     if len(booked_chairs) >= 4:
         raise HTTPException(status_code=400, detail="عذراً، هذه الساعة ممتلئة بالكامل (4 كراسي محجوزة)")
