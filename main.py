@@ -39,7 +39,17 @@ def get_available_slots(appointment_date: str):
     slots_status = []
     for hour in working_hours:
         # كم كرسي محجوز في هذه الساعة؟
-        chairs_in_hour = [int(b["chair_number"]) for b in booked_appointments if b.get("hour_slot") == hour and b.get("chair_number") is not None]
+        chairs_in_hour = []
+        for b in booked_appointments:
+            if isinstance(b, dict):
+                h_slot = b.get("hour_slot")
+                c_num = b.get("chair_number")
+                if h_slot == hour and c_num is not None and str(c_num).isdigit():
+                    chairs_in_hour.append(int(c_num))
+            else:
+                if b is not None and str(b).isdigit():
+                    chairs_in_hour.append(int(b))
+                    
         available_chairs = [c for c in [1, 2, 3, 4] if c not in chairs_in_hour]
         
         slots_status.append({
