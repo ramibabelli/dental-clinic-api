@@ -99,7 +99,8 @@ def create_appointment(appointment: AppointmentCreate):
             "status": "confirmed"
         }
         
-        insert_response = supabase.table("appointments").insert(payload).execute()
+        insert_response = supabase.table("appointments").insert(payload).select("*").execute()
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Supabase Insert Error: {str(e)}")
     
