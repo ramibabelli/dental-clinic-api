@@ -3,4 +3,5 @@ uvicorn
 supabase>=2.3.0
 pydantic
 python-dotenv
-
+PyJWT
+bcrypt
