@@ -2,12 +2,15 @@ import logging
 import os
 import re
 import secrets
+import time
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 from zoneinfo import ZoneInfo
 
+import bcrypt
+import jwt
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from postgrest.exceptions import APIError
 from pydantic import BaseModel, Field
@@ -31,6 +34,31 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Supabase URL or Key is missing in environment variables!")
 if not ADMIN_KEY:
     raise RuntimeError("ADMIN_API_KEY is missing in environment variables!")
+
+# ---- تسجيل الدخول ----
+JWT_SECRET = os.getenv("JWT_SECRET")
+TOKEN_HOURS = 12            # مدة صلاحية الدخول (يوم عمل)
+MAX_FAILS = 5               # محاولات فاشلة مسموحة
+LOCK_SECONDS = 15 * 60      # مدة المنع بعد تجاوزها
+
+
+def load_users() -> dict[str, bytes]:
+    """ADMIN_USERS بصيغة:  secretary:HASH1,owner:HASH2"""
+    users: dict[str, bytes] = {}
+    for item in os.getenv("ADMIN_USERS", "").split(","):
+        item = item.strip()
+        if ":" in item:
+            name, pw_hash = item.split(":", 1)
+            users[name.strip()] = pw_hash.strip().encode()
+    return users
+
+
+USERS = load_users()
+if not JWT_SECRET or not USERS:
+    raise RuntimeError("JWT_SECRET or ADMIN_USERS is missing in environment variables!")
+
+DUMMY_HASH = bcrypt.hashpw(b"dummy", bcrypt.gensalt())
+FAILED_LOGINS: dict[str, list[float]] = {}   # IP -> أوقات المحاولات الفاشلة
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -72,10 +100,29 @@ class StatusUpdate(BaseModel):
 # ---------------------------------------------------------------
 # دوال مساعدة
 # ---------------------------------------------------------------
-def require_admin(x_admin_key: str = Header(None)):
-    """حماية مسارات السكرتيرة بمفتاح بالـ Header اسمه X-Admin-Key"""
-    if not x_admin_key or not secrets.compare_digest(x_admin_key, ADMIN_KEY):
-        raise HTTPException(status_code=401, detail="غير مصرح")
+class LoginBody(BaseModel):
+    username: str = Field(max_length=50)
+    password: str = Field(max_length=100)
+
+
+def require_admin(authorization: str = Header(None), x_admin_key: str = Header(None)) -> str:
+    """بيقبل: توكن الدخول (Authorization: Bearer ...) أو مفتاح الطوارئ X-Admin-Key (للمالك فقط)"""
+    if x_admin_key and secrets.compare_digest(x_admin_key, ADMIN_KEY):
+        return "owner-key"
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            payload = jwt.decode(authorization[7:], JWT_SECRET, algorithms=["HS256"])
+            return str(payload["sub"])
+        except jwt.PyJWTError:
+            pass
+    raise HTTPException(status_code=401, detail="غير مصرح")
+
+
+def client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")   # Render بيحط IP الزائر هون
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 def now_clinic() -> datetime:
@@ -227,7 +274,48 @@ def create_appointment(appointment: AppointmentCreate):
 
 
 # ---------------------------------------------------------------
-# مسارات الإدارة (السكرتيرة) - تحتاج Header: X-Admin-Key
+# تسجيل الدخول
+# ---------------------------------------------------------------
+@app.post("/auth/login")
+def login(body: LoginBody, request: Request):
+    ip = client_ip(request)
+    now = time.time()
+
+    recent = [t for t in FAILED_LOGINS.get(ip, []) if now - t < LOCK_SECONDS]
+    FAILED_LOGINS[ip] = recent
+    if len(recent) >= MAX_FAILS:
+        raise HTTPException(status_code=429, detail="محاولات كثيرة، جرّب بعد 15 دقيقة")
+
+    stored = USERS.get(body.username)
+    try:
+        # بنفحص دايماً (حتى لو المستخدم مش موجود) حتى ما يعرف المهاجم أي أسماء صحيحة
+        password_ok = bcrypt.checkpw(body.password.encode(), stored or DUMMY_HASH)
+    except ValueError:
+        logger.error("Invalid password hash format for user %s", body.username)
+        password_ok = False
+
+    if not stored or not password_ok:
+        recent.append(now)
+        raise HTTPException(status_code=401, detail="اسم المستخدم أو كلمة السر غير صحيحة")
+
+    FAILED_LOGINS.pop(ip, None)
+    expires_in = TOKEN_HOURS * 3600
+    token = jwt.encode(
+        {"sub": body.username, "exp": int(now) + expires_in},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+    return {"access_token": token, "token_type": "bearer", "expires_in": expires_in}
+
+
+@app.get("/auth/me")
+def me(user: str = Depends(require_admin)):
+    """الواجهة بتستخدمه لتتأكد إنه الدخول لسا صالح"""
+    return {"user": user}
+
+
+# ---------------------------------------------------------------
+# مسارات الإدارة (السكرتيرة) - تحتاج تسجيل دخول (Bearer token)
 # ---------------------------------------------------------------
 @app.get("/appointments", dependencies=[Depends(require_admin)])
 def get_all_appointments(date: str):
