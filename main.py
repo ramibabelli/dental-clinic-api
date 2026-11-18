@@ -65,7 +65,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 OPEN_HOURS = list(range(10, 22))   # آخر موعد 21:00 - 22:00
 CHAIRS = [1, 2, 3, 4]
 BOOKING_WINDOW_DAYS = 7            # المريض بيحجز خلال 7 أيام (اليوم + 6)
-VALID_STATUSES = ("confirmed", "arrived", "cancelled", "no_show")
+VALID_STATUSES = ("pending", "confirmed", "arrived", "cancelled", "no_show")
 PHONE_RE = re.compile(r"^[0-9+\-\s]{7,20}$")
 
 app = FastAPI(title="Dental Clinic API", version="2.0")
@@ -94,7 +94,7 @@ class AdminAppointmentCreate(AppointmentCreate):
 
 
 class StatusUpdate(BaseModel):
-    status: Literal["confirmed", "arrived", "cancelled", "no_show"]
+    status: Literal["pending", "confirmed", "arrived", "cancelled", "no_show"]
 
 
 # ---------------------------------------------------------------
@@ -160,7 +160,7 @@ def fetch_rows(columns: str, start: date, end: date) -> list[dict]:
     return response.data or []
 
 
-def book(data: AppointmentCreate, chairs: list[int]) -> dict:
+def book(data: AppointmentCreate, chairs: list[int], status: str) -> dict:
     """بيجرّب الكراسي بالترتيب. الـ unique index بالقاعدة هو اللي بيمنع الحجز المزدوج"""
     for chair in chairs:
         payload = {
@@ -170,12 +170,17 @@ def book(data: AppointmentCreate, chairs: list[int]) -> dict:
             "appointment_date": data.appointment_date.isoformat(),
             "hour_slot": data.hour_slot,
             "chair_number": chair,
-            "status": "confirmed",
+            "status": status,
         }
         try:
             response = supabase.table("appointments").insert(payload).execute()
             return {
-                "message": "تم حجز الموعد بنجاح",
+                "message": (
+                    "تم استلام طلبك وهو بانتظار تأكيد العيادة، رح نتواصل معك على رقمك"
+                    if status == "pending"
+                    else "تم حجز الموعد بنجاح"
+                ),
+                "status": status,
                 "assigned_chair": chair,
                 "details": response.data,
             }
@@ -262,7 +267,7 @@ def get_available_slots(appointment_date: str):
 
 @app.post("/appointments")
 def create_appointment(appointment: AppointmentCreate):
-    """حجز من المريض: أول كرسي شاغر تلقائياً، وبس خلال الأيام السبعة القادمة"""
+    """طلب حجز من المريض: بيحجز أول كرسي شاغر بحالة pending لحد ما السكرتيرة توافق"""
     validate_booking_basics(appointment)
     check_patient_window(appointment.appointment_date)
 
@@ -270,7 +275,7 @@ def create_appointment(appointment: AppointmentCreate):
     if appointment.appointment_date == now.date() and appointment.hour_slot <= now.hour:
         raise HTTPException(status_code=400, detail="هذه الساعة مضت أو بدأت")
 
-    return book(appointment, CHAIRS)
+    return book(appointment, CHAIRS, "pending")   # طلب المريض بيستنى موافقة السكرتيرة
 
 
 # ---------------------------------------------------------------
@@ -336,6 +341,26 @@ def get_all_appointments(date: str):
     return {"appointments": response.data or []}
 
 
+@app.get("/admin/pending", dependencies=[Depends(require_admin)])
+def get_pending():
+    """طلبات المرضى بانتظار الموافقة (من اليوم وطالع)، الأقدم موعداً أولاً"""
+    today = now_clinic().date().isoformat()
+    try:
+        response = (
+            supabase.table("appointments")
+            .select("*")
+            .eq("status", "pending")
+            .gte("appointment_date", today)
+            .order("appointment_date")
+            .order("hour_slot")
+            .execute()
+        )
+    except Exception:
+        logger.exception("Supabase select failed")
+        raise HTTPException(status_code=500, detail="خطأ في الاتصال بقاعدة البيانات")
+    return {"appointments": response.data or []}
+
+
 @app.get("/admin/week", dependencies=[Depends(require_admin)])
 def get_week(start: Optional[str] = None):
     """عرض أسبوعي: لكل يوم عدد المواعيد والسعة الكاملة. الافتراضي يبدأ من اليوم"""
@@ -361,12 +386,12 @@ def admin_create_appointment(appointment: AdminAppointmentCreate):
     """حجز من السكرتيرة: أي تاريخ، وممكن تحدد الكرسي"""
     validate_booking_basics(appointment)
     chairs = [appointment.chair_number] if appointment.chair_number else CHAIRS
-    return book(appointment, chairs)
+    return book(appointment, chairs, "confirmed")  # حجز السكرتيرة مؤكد مباشرة
 
 
 @app.patch("/admin/appointments/{appointment_id}", dependencies=[Depends(require_admin)])
 def update_status(appointment_id: int, body: StatusUpdate):
-    """تغيير الحالة: confirmed / arrived / cancelled / no_show"""
+    """تغيير الحالة: pending / confirmed (قبول) / cancelled (رفض أو إلغاء) / arrived / no_show"""
     try:
         response = (
             supabase.table("appointments")
